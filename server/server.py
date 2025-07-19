@@ -4,7 +4,7 @@ import os
 
 # --- Server Configurations
 HOST = '0.0.0.0'
-PORT = 9999
+PORT = 1234
 MAX_CLIENTS = 5
 BUFFER_SIZE = 4096 #(4KB)
 
@@ -12,68 +12,51 @@ BUFFER_SIZE = 4096 #(4KB)
 def accept_client():
     while True:
         client, addr = server.accept()
-        print(f'Client {client} just connected.')
+        print(f'Client {client} has just connected.')
 
         handle_client(client)
 
 
 def handle_client(client):
     while True:
-        operation_menu_str = \
-        '--- Choose operation\n' \
-        '-- 0 (DOWNLOAD Image)\n' \
-        '-- 1 (UPLOAD Image)\n'
+        show_available_images(client)
 
-        client.send(operation_menu_str.encode())
+        client_response = client.recv(1024).decode().split()
 
         try:
-            operation = int(client.recv(1024).decode())
-            if (operation == 0):
-                show_available_images(client)
+            command = client_response[0]
+            file_name = client_response[1]
+            
+            if command == 'DOWNLOAD':
+                if os.path.exists(file_name):
+                    send_image(client, file_name)
+                else:
+                    client.send('ERROR FILE_NOT_FOUND'.encode())
+            else:
+                client.send('ERROR INVALID_COMMAND'.encode())
 
-        except ValueError:
-            client.send('Invalid operation.'.encode())
+        except IndexError:
+            client.send('ERROR BAD_ARGUMENT'.encode())
 
 
 def show_available_images(client):
-    while True:
-        images = {}
-        i = 0
 
-        # Printing all available images
-        for root, _, files in os.walk(os.getcwd()):
-            for file in files:
-                if file.lower().endswith('.jpg'):
-                    images.update({i: file})
-                    i+=1
-        
-        image_listing = 'AVAILABLE IMAGES: \n'
-        for i, img in images.items():
-            image_listing += f'{i} -- {img}\n'
-        
-        client.send(image_listing.encode())
-        
-        print(images)
-        # Sending chosen image to client
-        try:
-            choice = int(client.recv(1024).decode())
-            send_image(client, images[choice])
-            break
-        except ValueError:
-            client.send('Invalid answer.'.encode())
-        except KeyError:
-            client.send('Invalid answer'.encode())
+    # Printing all available images
+    image_listing = 'AVAILABLE IMAGES: \n'
+
+    for root, _, files in os.walk(os.getcwd()):
+        for file in files:
+            if file.lower().endswith('.jpg'):
+                image_listing += f'{file}\n'
+    
+    client.send(image_listing.encode())
 
 
 
 def send_image(client, IMG_NAME: str):
-    client.send('SENDING_IMAGE'.encode())
 
-    IMG_SIZE_str = str(os.path.getsize(IMG_NAME))
-    IMG_SIZE_bytes = IMG_SIZE_str.encode('utf-8')
-    
-    header = IMG_SIZE_bytes + b' ' * (64 - len(IMG_SIZE_bytes))
-    client.send(header)
+    IMG_SIZE = str(os.path.getsize(IMG_NAME))
+    client.send(f'OK {IMG_SIZE}'.encode())
 
     with open(IMG_NAME, 'rb') as f:
         while True:
