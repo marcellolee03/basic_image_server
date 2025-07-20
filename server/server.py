@@ -24,14 +24,17 @@ def handle_client(client):
         client_response = client.recv(1024).decode().split()
 
         try:
-            command = client_response[0]
+            protocol = client_response[0]
             file_name = client_response[1]
             
-            if command == 'DOWNLOAD':
+            if protocol == 'DOWNLOAD':
                 if os.path.exists(file_name):
                     send_image(client, file_name)
                 else:
                     client.send('ERROR FILE_NOT_FOUND'.encode())
+
+            if protocol == 'UPLOAD':
+                receive_image(client)
             else:
                 client.send('ERROR INVALID_COMMAND'.encode())
 
@@ -52,13 +55,12 @@ def show_available_images(client):
     client.send(image_listing.encode())
 
 
+def send_image(client, img_name: str):
 
-def send_image(client, IMG_NAME: str):
+    img_size = str(os.path.getsize(img_name))
+    client.send(f'OK {img_size}'.encode())
 
-    IMG_SIZE = str(os.path.getsize(IMG_NAME))
-    client.send(f'OK {IMG_SIZE}'.encode())
-
-    with open(IMG_NAME, 'rb') as f:
+    with open(img_name, 'rb') as f:
         while True:
             bytes_read = f.read(BUFFER_SIZE)
 
@@ -66,6 +68,23 @@ def send_image(client, IMG_NAME: str):
                 break
             client.sendall(bytes_read)
 
+
+def receive_image(client):
+    client.send('OK AWAITING_FILE_DATA'.encode())
+
+    # Receiving file data
+    file_data = client.recv(1024).decode().split()
+    file_name = file_data[0]
+    file_size = file_data[1]
+
+    bytes_received = 0
+    with open(f'{file_name}.jpg', 'wb') as f:
+        while bytes_received < file_size:
+            bytes_read = client.recv(4096)
+            if not bytes_read:
+                break
+            f.write(bytes_read)
+            bytes_received += len(bytes_read)
 
 # --- Server Initialization
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
