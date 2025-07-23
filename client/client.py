@@ -1,68 +1,108 @@
-import os
 import socket
+import json
+import struct
+import base64
 
 # --- Server info
-HOST = '0.0.0.0'
-PORT = 1234
-BUFFER_SIZE = 4096 #(4KB)
 
-# --- Instructions
-INSTRUCTIONS = '''
-To download a file, simply enter: "DOWNLOAD [FILENAME]"
-'''
+HOST = '0.0.0.0'
+PORT = 4444
+HEADER_LENGTH = 4
+
+# --- AUX Functions
+
+def receive_all(sock: socket.socket, length: int) -> bytes | None:
+    chunks = []
+    bytes_recd = 0
+    while bytes_recd < length:
+        chunk = sock.recv(length - bytes_recd)
+
+        if not chunk:
+            return None
+        
+        chunks.append(chunk)
+        bytes_recd += len(chunk)
+
+    return b''.join(chunks)
+
+
+def receive_message(client_socket: socket.socket) -> dict | None:
+    try:
+        header_bytes = receive_all(client_socket, HEADER_LENGTH)
+        if not header_bytes:
+            print(f'{client_socket} disconnected. Could not read header')
+
+        message_length = struct.unpack('!I', header_bytes)[0]
+
+        message_bytes = receive_all(client_socket, message_length)
+        if not message_bytes:
+            print(f'{client_socket} disconnected. Could not get payload')
+        
+        message = message_bytes.decode()
+        return json.loads(message)
+
+    except(struct.error, json.JSONDecodeError) as e:
+        print(f'Error while processing message: {e}')
+        return None
+    
+    except Exception as e:
+        print(f'Unexpected error: {e}')
+        return None
+
+
+def assemble_message(payload_dict) -> bytes:
+    payload = json.dumps(payload_dict)
+    header = struct.pack('!I', len(payload))
+    return header + payload.encode()
+
 
 # --- Functions
-def download_image(file_size: int):
-    new_image_name = input('How would you like to name the file?\n')
 
-    bytes_received = 0
-    with open(f'{new_image_name}.jpg', 'wb') as f:
-        while bytes_received < file_size:
-            bytes_read = client.recv(4096)
+def download_image(FILE_SIZE: int):
+    IMG_NAME_LOCAL = input('\nHow would you like to name the file?\n')
+
+    bytes_recieved = 0
+    with open(f'{IMG_NAME_LOCAL}.jpg', 'wb') as f:
+        while bytes_recieved < FILE_SIZE:
+
+            server_payload = receive_message(client)
+
+            base64_data = server_payload['data'].encode()
+            bytes_read = base64.b64decode(base64_data)
+            
             if not bytes_read:
                 break
             f.write(bytes_read)
-            bytes_received += len(bytes_read)
+            bytes_recieved += len(bytes_read)
 
-
-def upload_image(image_name: str):
-    img_size = str(os.path.getsize(image_name))
-    client.send(f'{image_name} {img_size}'.encode())
-
-    with open(image_name, 'rb') as f:
-        while True:
-            bytes_read = f.read(BUFFER_SIZE)
-
-            if not bytes_read:
-                break
-            client.sendall(bytes_read)
 
 # --- Client initialization
+
 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client.connect((HOST, PORT))
 
 
 # --- Main client logic
+
 while True:
-    print(client.recv(1024).decode())
+    client_input = input().split()
+    command = client_input[0]
 
-    message = input()
-    client.send(message.encode())
-
-    server_message = client.recv(1024).decode().split()
-
-    # Client request
-    protocol = message.split()[0]
-    file_name = message.split()[1]
-
-    # Server response
-    code = server_message[0]
-    response = server_message[1]
-
-    if code == 'OK':
-        if protocol == 'DOWNLOAD':
-            download_image(int(response))
-        if protocol == 'UPLOAD':
-            upload_image(file_name)
+    if command == 'DOWNLOAD' or command == 'UPLOAD':
+        client.send(assemble_message({'command': command,
+                                      'filename': client_input[1]}))
     else:
-        print(f'{response}\n')
+        client.send(assemble_message({'command': command}))
+
+    server_response = receive_message(client)
+
+    match server_response['status']:
+        case 'SENDING_AVAILABLE_FILES':
+            file_list = receive_message(client)['data']
+            print(file_list)
+        
+        case 'STARTING_TRANSFER':
+            download_image(server_response['filesize'])
+        
+        case _:
+            print(server_response['details'])
